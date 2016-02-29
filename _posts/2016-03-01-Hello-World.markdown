@@ -3,6 +3,7 @@ layout : post
 title : "Hello World"
 date : 2016-03-01
 author : "sharpdeep"
+header-img: "img/post-bg-2015.jpg"
 tags :
     - Hello World
 ---
