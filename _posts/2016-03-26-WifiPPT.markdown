@@ -1,0 +1,341 @@
+---
+layout:     post
+title:      "用Python做一个不需要APP的PPT遥控器"
+subtitle:   ""
+date:       2016-03-26
+author:     "Sharpdeep"
+header-img: "img/post-bg-2015.jpg"
+tags:
+    - python
+    - DIY
+    - 记录
+---
+
+## 0x00 为什么要做PPT遥控器
+前两天毕业设计中期答辩，要求需要PPT，所以我想也许我需要一个PPT遥控器。上网搜索了一下，很多都是需要硬件支持的，去淘宝搜索一下就可以看到。最后看到一个比较好的是[百度家的](http://ppt.baidu.com/)，但是缺点有两个：一是必须要手机PC同时能上网，学校的PC能不能上网我真不敢确定；另一个是遥控居然只有上一页和下一页，如果有动画效果是在点击后运行的根本就没有用！！没办法，只有自己动手了。
+
+## 0x01 目标
+
+ 1. 实现PPT基本操作：全屏播放/上一页/下一页/模拟点击；
+ 2. 不用App，而是采用浏览器作为终端控制；
+
+## 0x02 如何实现PPT操作
+
+因为需要PPT的操作，所以也就需要找到相应的接口。搜索了一下，发现Python有一个用于win平台操作的模块`pywin32`，其中的`win32com`模块就能实现PPT的操作，`win32api`能实现模拟按键或者点击的操作。
+
+比如，让PPT全屏播放：
+
+```python
+app = win32com.client.Dispatch("PowerPoint.Application")
+app.ActivePresentation.SlideShowSettings.Run()
+```
+
+也许你这时候已经发现麻烦的地方在哪里了：我们怎么找到这个`app`他有哪些方法，哪些属性呢？我查了一下[文档](http://docs.activestate.com/activepython/2.4/pywin32/html/com/win32com/HTML/docindex.html)是这么说的：
+
+> How do I know which methods and properties are available?
+> 
+> Good question. This is hard! You need to use the documentation with
+> the products, or possibly a COM browser. Note however that COM
+> browsers typically rely on these objects registering themselves in
+> certain ways, and many objects to not do this. You are just expected
+> to know.
+
+其实我们去[MSDN](https://msdn.microsoft.com/en-us/library/ff743835.aspx)查询相应的COM接口也是可以的,我用到的接口也都是在MSDN中查到的。
+
+PPT控制的最终结果如下[PPTControler.py](https://github.com/sharpdeep/WifiPPT/blob/master/PPTControler.py)：
+
+```python
+# -*- coding: utf-8 -*-
+
+__author__ = 'sharpdeep'
+
+import win32com.client
+import win32api
+import win32con
+import time
+import pythoncom
+
+VK_CODE = {
+	'spacebar':0x20,
+	'down_arrow':0x28,
+}
+
+class PPTControler:
+	def __init__(self):
+		# 多线程时会出问题，http://www.cnblogs.com/AlgorithmDot/p/3386972.html
+		pythoncom.CoInitialize()
+		self.app = win32com.client.Dispatch("PowerPoint.Application")
+
+	def fullScreen(self):
+		#全屏播放
+		if self.hasActivePresentation():
+			self.app.ActivePresentation.SlideShowSettings.Run()
+			return self.getActivePresentationSlideIndex()
+
+	def click(self):
+		win32api.keybd_event(VK_CODE['spacebar'],0,0,0)
+		win32api.keybd_event(VK_CODE['spacebar'],0,win32con.KEYEVENTF_KEYUP,0)
+		return self.getActivePresentationSlideIndex()
+
+	def gotoSlide(self,index):
+		#跳转到指定的页面
+		if self.hasActivePresentation():
+			try:
+				self.app.ActiveWindow.View.GotoSlide(index)
+				return self.app.ActiveWindow.View.Slide.SlideIndex
+			except:
+				self.app.SlideShowWindows(1).View.GotoSlide(index)
+				return self.app.SlideShowWindows(1).View.CurrentShowPosition
+
+	def nextPage(self):
+		if self.hasActivePresentation():
+			count = self.getActivePresentationSlideCount()
+			index = self.getActivePresentationSlideIndex()
+			return index if index >= count else self.gotoSlide(index+1)
+
+	def prePage(self):
+		if self.hasActivePresentation():
+			index =  self.getActivePresentationSlideIndex()
+			return index if index <= 1 else self.gotoSlide(index-1)
+
+	def getActivePresentationSlideIndex(self):
+		#得到活跃状态的PPT当前的页数
+		if self.hasActivePresentation():
+			try:
+				index = self.app.ActiveWindow.View.Slide.SlideIndex
+			except:
+				index = self.app.SlideShowWindows(1).View.CurrentShowPosition
+		return index
+
+	def getActivePresentationSlideCount(self):
+		#返回处于活跃状态的PPT的页面总数
+		return self.app.ActivePresentation.Slides.Count
+
+	def getPresentationCount(self):
+		#返回打开的PPT数目
+		return self.app.Presentations.Count
+
+	def hasActivePresentation(self):
+		#判断是否有打开PPT文件
+		return True if self.getPresentationCount() > 0 else False
+
+if __name__ == '__main__':
+	ppt = PPTControler()
+	ppt.fullScreen()
+	for i in range(5):
+		time.sleep(1)
+		ppt.nextPage()
+
+```
+
+## 0x03 如何遥控
+
+遥控采用的是同一Wifi下的形式，所以可以在PC端用Python建立一个简单的TCP服务器。也就是请求到来，发送一个html页面，比较特殊的是在播放时因为不能频繁刷新页面，所以采用ajax方式跟后台通信，此时的`Content-type`是`text/plain`。
+
+但是要注意一点：
+
+在后台接到get请求后，会执行对应的PPT操作，但是一开始的时候会出现一个`CoInitialize尚未调用`的错误，而这是在非wifi控制下正常运行的。查了资料后，找到了一个比较好的[回答](http://www.cnblogs.com/AlgorithmDot/p/3386972.html),大概意思是在多线程中会出现这个问题，需要先执行一段语句：
+
+```python
+import pythoncom
+pythoncom.CoInitialize()`
+```
+上面的`PPTControler.py`就是已经改正后的代码
+
+[WifiPPT.py](https://github.com/sharpdeep/WifiPPT/blob/master/WifiPPT.py)如下：
+
+```python
+# -*- coding: utf-8 -*-
+
+__author__ = 'sharpdeep'
+
+import webbrowser
+import socket,os
+import socketserver
+import http.server
+import time
+import win32com
+import pythoncom
+from string import Template
+from PPTControler import PPTControler
+
+PORT = 8000
+HOST = socket.gethostbyname(socket.gethostname())
+
+
+class WifiPPTHandler(http.server.SimpleHTTPRequestHandler):
+	def do_GET(self):
+		if self.path == '/':
+			with open('template/index_template.html','r',encoding='utf-8') as ft:
+				message = ft.read()
+				self.send_response(200)
+				self.send_header("Content-type", "text/html")
+				self.end_headers()
+				self.wfile.write(message.encode('utf-8'))
+		elif self.path == '/play':
+			PPTControler().fullScreen()
+			total_page = PPTControler().getActivePresentationSlideCount()
+			with open('template/play_template.html','r',encoding='utf-8') as ft:
+				message = (Template(ft.read()).substitute(current_page=1,total_page=total_page))
+				self.send_response(200)
+				self.send_header("Content-type", "text/html")
+				self.end_headers()
+				self.wfile.write(message.encode('utf-8'))
+		elif self.path == '/nextpage':
+			self.ajax(PPTControler().nextPage())
+		elif self.path == '/prepage':
+			self.ajax(PPTControler().prePage())
+		elif self.path == '/click':
+			self.ajax(PPTControler().click())
+		elif '/static/image' in self.path:
+			self.send_response(200)
+			self.send_header('Content-type','image/png')
+			self.end_headers()
+			png_name = self.path.split('/')[-1]
+			png_path = os.path.join('.','static','image',png_name)
+			with open(png_path,'rb') as f:
+				self.wfile.write(f.read())
+
+	def ajax(self,ret_str):
+		self.send_response(200)
+		self.send_header('Content-type','text/plain')
+		self.end_headers()
+		self.wfile.write(str(ret_str).encode('utf-8'))
+
+if __name__ == '__main__':
+	with open('usage.html','w',encoding='utf-8') as f:
+		with open('template/usage_template.html','r',encoding='utf-8') as ft:
+			f.write(Template(ft.read()).substitute(host=HOST,port=PORT))
+
+	httpd = socketserver.ThreadingTCPServer(('',PORT),WifiPPTHandler)
+	webbrowser.open_new_tab('usage.html')
+	httpd.serve_forever()
+```
+
+[usage_template.html](https://github.com/sharpdeep/WifiPPT/blob/master/template/usage_template.html)
+
+```html
+<!DOCTYPE html>
+<html  xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>WifiPPT Usage</title>
+</head>
+<body>
+    <h1 align="center">WifiPPT</h1>
+    <ol>
+        <li>打开PPT文件</li><br/>
+        <li>扫描二维码,如二维码不能显示请先联网或者直接输入 <b>http://$host:$port</b></li><br/>
+        <li>Enjoy it</li><br/>
+    </ol>
+    <center>
+        <img src="http://qrcode.kaywa.com/img.php?s=8&d=http%3A%2F%2F$host%3A$port" alt="qrcode">
+    </center>
+</body>
+</html>
+```
+
+[index_template.html](https://github.com/sharpdeep/WifiPPT/blob/master/template/index_template.html)
+
+```html
+<!DOCTYPE html>
+<html  xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta name="viewport" content="width=device-width,user-scalable=no" />
+    <title>WifiPPT</title>
+
+</head>
+<body>
+    <h1 align="center"> Remote Control</h1>
+    <center>
+        <a href="/play">
+            <img src="/static/image/play.png" style="width:250px;height:250px;background-size:100% 100%;margin-top:50px">
+        </a>
+        <h2 align="center">点击播放PPT</h2>
+    </center>
+</body>
+</html>
+```
+
+[play_template.html](https://github.com/sharpdeep/WifiPPT/blob/master/template/play_template.html):
+
+```html
+<!DOCTYPE html>
+<html  xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta name="viewport" content="width=device-width,user-scalable=no" />
+
+    <title>WifiPPT Usage</title>
+    <script language="javascript">
+        var xmlhttp;
+        if (window.XMLHttpRequest){
+            // code for IE7+, Firefox, Chrome, Opera, Safari
+            xmlhttp=new XMLHttpRequest();
+        }
+        else{
+            // code for IE6, IE5
+            xmlhttp=new ActiveXObject("Microsoft.XMLHTTP");
+        }
+        function ajax(url){
+            xmlhttp.onreadystatechange  = function (){
+                if(xmlhttp.readyState == 4 && xmlhttp.status == 200){
+                    document.getElementById('current_page').textContent = xmlhttp.responseText;
+                }
+            };
+            xmlhttp.open("GET","/"+url,true);
+            xmlhttp.send(null);
+        }
+    </script>
+</head>
+<body>
+    <center>
+        <button><img algin='center' onclick="ajax('prepage')" src="/static/image/pre.png" style="width:250px;height:100px"></button>
+        <button><img algin='center' onclick="ajax('click')" src="/static/image/click.png" style="width:250px;height:230px;background-size:100% 100%;margin-top:0px"></button>
+        <button><img align="center" onclick="ajax('nextpage')" src="/static/image/next.png" style="width:250px;height:100px"></button>
+        <h3>进度：<span id="current_page">1</span> / $total_page</h3>
+    </center>
+</body>
+</html>
+```
+
+## 0x04 Win平台下的建议
+
+到了这里，代码其实已经都写完了，但是运行之后，可能会发现只能本机访问，局域网下的其他手机PC都不能访问。一开始我以为是代码问题，也调试了好久，最后突然想起是不是防火墙的原因呢？关了防火墙之后，发现程序运行正常？！！
+
+所以建议调试使用过程关闭防火墙。
+
+## 0x05 打包exe文件
+这时候的代码完全可以使用了，但是为了让没有python的用户也能使用，只能再多一个步骤，打包一下成exe了。
+
+关于python代码打包成exe，有两个工具：`py2exe`和`pyinstaller`，这里选用`pyinstaller`，因为使用简单，基本都是一句命令的事，除此之外还可以指定软件图标。
+打包命令为：
+
+```
+pyinstaller -F -i icon.ico WifiPPT.py
+```
+
+-F 打包成为单文件
+-i 指定图标
+
+打包后会在项目中生成两个文件夹`dist`和`build`，`dist`中就是可执行文件。
+
+因为项目正常运行还需要template文件夹和static文件夹，所以还需要将两个文件夹复制到`dist`文件夹中。
+
+最后整理为一个bat文件
+[build.bat](https://github.com/sharpdeep/WifiPPT/blob/master/build.bat)
+
+```shell
+pyinstaller -F -i icon.ico WifiPPT.py
+mkdir .\dist\template
+mkdir .\dist\static
+xcopy .\template\*.* /s .\dist\template
+xcopy .\static\*.* /s .\dist\static
+
+pause
+```
+
+## 0x06 项目Github地址
+
+[https://github.com/sharpdeep/WifiPPT](https://github.com/sharpdeep/WifiPPT)
