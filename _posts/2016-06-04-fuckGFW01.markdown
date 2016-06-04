@@ -1,0 +1,206 @@
+---
+layout: post
+title: 如何科学上网
+subtitle: 搭建自己的Shadowsocks服务器
+date: 2016-06-04T00:00:00.000Z
+author: Sharpdeep
+header-img: img/post-bg-2015.jpg
+tags:
+  - 科学上网
+  - Shadowsocks
+  - 教程
+---
+
+# 0x00 为什么要搭建自己的梯子
+
+虽然目前有许多免费或者付费的科学上网服务，但是大多数都是不可靠的。免费的不稳定，速度又慢，还不安全，付费服务相比免费服务好一点，但是也不能保证安全，毕竟用的是对方的代理服务器。
+
+所以如果有能力，花点小钱买个VPS搭一个自己的梯子是更好的选择。
+
+# 0x01 需要准备些什么
+
+本文提供的科学上网方案是VPS+Shadowsocks，VPS需要自己购买，大概10几美刀就能买到一个不错的VPS了。
+
+## 什么是Shadowsocks
+
+Shadowsocks是一个开源的sock代理项目，作者是[@clowwindy](https://github.com/clowwindy)(作者在去年，也就是2015年被请喝茶，其Github上的仓库被清空了，但是Shadowsocks目前仍然可用)。
+
+Shadowsocks的原理如图：
+
+![](/img//20160604/00.png)
+
+当然你不用知道原理也可以继续往下看。
+
+## 购买VPS
+
+比较流行的VPS提供商有：搬瓦工(bandwagonhost),DigitalOcean和Linode。我选用的是搬瓦工，理由嘛，性价比高咯。我现在用的一年19美刀的VPS，1G的RAM，20G硬盘，每月2000G流量。
+
+而且现在搬瓦工支持支付宝支付，这也降低了国内购买的门槛。
+
+搬瓦工的VPS可以到[Browse Products & Services](https://bandwagonhost.com/cart.php)里查看购买。注册购买付款就行了，没有什么难度。
+
+顺便甩一个优惠码：**IAMSMART5FQ956**
+
+# 0x02 管理你的VPS
+
+你已经购买了搬瓦工，接下来你可以到Client Area --> Services --> My Services中查看自己的VPS。进入KiwiVM面板后，你可以看到VPS的所有信息。
+
+![](/img/20160604/01.png)
+
+在这里你可以看到IP地址，物理地址，SSH端口(不是默认的22端口)，硬盘使用情况，RAM使用情况，流量等等。在面板里也可以直接用Shell直接操作VPS，但是不推荐，一般是使用SSH来操作VPS。
+
+因为不同的操作系统下搭建SS服务器略有不同，本文是在Centos 7 x86_64 上搭建的，如果系统不同，你可以在控制面板上安装新系统(非常快，1分钟都不用就安装好了)。
+
+另外在左侧菜单最底下有一个Shadowsocks Server的选项，应该是搬瓦工官方提供的一键Shadowsocks部署，没有试过。
+
+这里我们只需要记住SSH端口和IP地址就行了。关于登陆密码，初始化密码我也不记得是什么了，你可以在控制面板中生成随机密码，登陆系统后再使用`passwd`命令修改密码。
+
+回到本机，现在你可以使用SSH连接你的VPS了。在windows上使用putty连接，linux上直接用ssh-client连接。本文以Ubuntu为例。
+
+```
+ssh root@ip-address -p ssh-port
+```
+
+将`ip-address`和`ssh-port`换成自己的ip地址和ssh端口。
+
+# 0x03 搭建Shadowsocks服务器
+
+Shadowsocks服务端主流有：
+
+- shadowsocks-nodejs
+- shadowsocks-libev
+- shadowsocks-Python
+- shadowsocks-go
+
+这里我们选用shadowsocks-python，在VPS上安装shadowsocks：
+
+```
+pip install shadowsocks
+```
+
+关于Shadowsocks的配置，有两种方式，一种是将配置写入配置文件中，一种是直接在命令行中配置。
+
+- **配置文件配置**
+
+前提是需要会使用Vi编辑配置文件，配置文件主要配置项为：
+
+```
+{
+          "server":"vps的ip",
+          "server_port":2333,   #服务器端口，与SSH端口不一样，最好大于1024
+          "local_port":1080,
+          "password":"barfoo!", #认证密码
+          "timeout":60,
+          "method":"aes-256-cfb" #加密方式，推荐使用aes-256-cfb
+}
+```
+
+将配置文件保存为`/etc/shadowsocks/config.json`，然后按配置文件启动shadowsocks：
+
+```
+ssserver -c /etc/shadowsocks/config.json -d start
+```
+
+停止shadowsocks服务：
+
+```
+ssserver -d stop
+```
+
+- **启动时配置**
+
+启动时如下：
+
+```
+ssserver -p 2333 -k barfoo -m aes-256-cfb --user nobody -d start
+```
+
+- p：服务器端口
+- k：认证密码
+- m：加密方式
+
+两种方式没有优劣之分，看你喜欢哪一种方式，如果你觉得第二种方式写得太长，你完全可以把命令写成一个启动脚本。
+
+# 0x04 如何使用
+
+## windows平台
+
+[windows客户端下载](https://sourceforge.net/projects/shadowsocksgui/files/dist/)或[百度云下载](http://pan.baidu.com/s/1gdYL9rP)
+
+![](/img/20160604/02.png)
+
+按照服务器的配置填写服务器IP，服务器端口(不是ssh端口)，加密方式。代理端口默认为1080即可。
+
+由于windows本身的原因，在科学上网之前还需要给浏览器装一个代理插件，如[switchysharp](http://pan.baidu.com/s/1skx3JFv)。
+
+新建一个情景模式，配置其sock代理ip为`127.0.0.1`，端口为`1080`，并选择SOCKS v5，保存配置。
+
+![](/img/20160604/03.png)
+
+现在打开客户端，连接Shadowsocks服务器，当你需要科学上网的时候，选择Shadowsocks模式，当你不需要时，可以选择直接直连(比如内网访问的时候)。
+
+## Linux平台
+
+Linux平台下的客户端其实跟服务端是同一个，安装：
+
+```
+pip install shadowsocks
+```
+
+连接Shadowsocks服务器：
+
+```
+sslocal -s ip-address -p port -b 127.0.0.1 -l 1080 -k password -m aes-256-cfb
+```
+
+其中
+
+- s: 服务器地址
+- p: 服务器端口，不是SSH端口
+- l: 本地代理端口，注意不要跟服务器端口搞混了
+- k: 认证密码           
+- m: 加密方式
+
+在Ubuntu中，你可以在系统设置 --> 网络 --> 网络代理中设置全局代理。
+
+![](/img/20160604/04.png)
+
+如果你不想全局，也可以像windows平台一样在浏览器上装代理插件。
+
+## Android平台
+
+下载[影梭](https://github.com/shadowsocks/shadowsocks-android/releases)
+
+同样只需要配置服务器IP，服务器端口，认证密码和加密方式就行了。Android上默认是全局代理。
+
+至于Mac OS X和IOS系统，我没用过，自己Google吧。
+
+现在已经可以科学上网了，打开[Google](https://www.google.com/)试一下.
+
+# 0x05 多人共享
+
+独乐了不如众乐乐，一个月2000G的流量对一个人来说是有点多了。这时候，你可以分享给你的朋友。Shadowsocks支持多端口，只需要修改配置文件为：
+
+```
+{
+        "server":"your-server-ip",
+        "timeout":600,
+        "method":"aes-256-cfb",
+        "port_password":
+        {
+                "2333":"user1-password",
+                "23333":"user2-password"
+        },
+        "_comment":
+        {
+                "2333":"myself",
+                "23333":"guest"
+        }
+}
+```
+
+然后启动
+
+```
+ssserver -c /etc/Shadowsocks/config.json -d start
+```
